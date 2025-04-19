@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+yt-dlp
+librosa
+matplotlib
+numpy
+scipy
+pydantic
+python-multipart
