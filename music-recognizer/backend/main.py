@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from routes import recognize
 from pydantic import BaseModel
 import webbrowser
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,7 @@ import os
 import hashlib 
 from db import database
 from models import songs, fingerprints
+import re
 
 import librosa
 import librosa.display
@@ -17,6 +19,8 @@ from io import BytesIO
 from scipy.signal import find_peaks
 
 app = FastAPI()
+
+app.include_router(recognize.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,6 +40,54 @@ async def shutdown():
 
 class LinkRequest(BaseModel):
     link: str
+
+# download audio
+@app.post("/download_audio")
+async def download_audio(req: LinkRequest):
+    link = req.link
+
+    os.makedirs("downloads", exist_ok=True)
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': 'downloads/%(title)s.%(ext)s',
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(link, download=True)
+
+            filename = ydl.prepare_filename(info_dict)
+            file_path = os.path.splitext(filename)[0] + '.mp3'
+
+            cleaned_title = re.sub(r'[^\w\s-]', '', info_dict['title'])
+            cleaned_title = re.sub(r'[-\s]+', ' ', cleaned_title).strip()
+            cleaned_path = f"downloads/{cleaned_title}.mp3"
+
+            if file_path != cleaned_path:
+                try:
+                    os.replace(file_path, cleaned_path)
+                    file_path = cleaned_path
+                except FileNotFoundError:
+                    raise HTTPException(status_code=500, detail=f"Downloaded file not found: {file_path}")
+
+            spectrogram, hashes = generate_spectrogram(file_path)
+
+            await add_to_db(info_dict['title'], info_dict['uploader'], hashes, cleaned_path)
+
+            return {
+                "status": "success",
+                "file_path": file_path,
+                "spectrogram": spectrogram
+            }
+    except Exception as e:
+        print(f"Error occurred: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Download failed: {str(e)}")
 
 # spectrogram stuff
 def generate_spectrogram(audio_path: str) -> str:
@@ -73,8 +125,8 @@ def generate_spectrogram(audio_path: str) -> str:
 
         peak_hash = hash_pair(time_diff, freq_diff)
         hashes.append((peak_hash, t1))
-        print(count)
         count += 1
+    print(count)
 
     # print("Generated Hashes:", hashes)
 
@@ -98,58 +150,27 @@ def generate_spectrogram(audio_path: str) -> str:
     
     return img_base64, hashes
 
-# download audio
-@app.post("/download_audio")
-async def download_audio(request: LinkRequest):
-    link = request.link
-
-    os.makedirs("downloads", exist_ok=True)
-
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(link, download=True)
-            file_path = f"downloads/{info_dict['title']}.mp3"
-
-            spectrogram, hashes = generate_spectrogram(file_path)
-
-            await add_to_db(info_dict["title"], hashes)
-
-            return {
-                "status": "success",
-                "file_path": file_path,
-                "spectrogram": spectrogram
-            }
-    except Exception as e:
-        print(f"Error occurred: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Download failed: {str(e)}")
-
 # hash stuff
 def hash_pair(time_diff, freq_diff):
     pair_string = f"{time_diff}_{freq_diff}"
     return hashlib.sha256(pair_string.encode('utf-8')).hexdigest()
 
 # add to db
-async def add_to_db(song_title: str, hashes: list[tuple[str, float]]):
+async def add_to_db(song_title: str, artist: str, hashes: list[tuple[str, float]], cleaned_path: str):
     print(f"adding {song_title}")
 
-    query = songs.select().where(songs.c.title == song_title)
+    query = songs.select().where(songs.c.title == song_title and songs.c.artist == artist)
     existing = await database.fetch_one(query)
 
     if existing:
         print(f"Song '{song_title}' already exists with ID {existing['id']}")
+
+        if os.path.exists(cleaned_path):
+            os.remove(cleaned_path)
+            print(f"Deleted downloaded file: {cleaned_path}")
         return existing['id']
 
-    query = songs.insert().values(title=song_title)
+    query = songs.insert().values(title=song_title, artist=artist)
     song_id = await database.execute(query)
     print(f"Inserted song {song_title} with ID {song_id}")
 
@@ -161,5 +182,9 @@ async def add_to_db(song_title: str, hashes: list[tuple[str, float]]):
         ))
 
     print(f"Saved {len(hashes)} fingerprints for {song_title}")
+
+    if os.path.exists(cleaned_path):
+        os.remove(cleaned_path)
+        print(f"Deleted downloaded file: {cleaned_path}")
 
     return song_id

@@ -7,6 +7,7 @@ export default function Home() {
   const [link, setLink] = useState("");
   const [loading, setLoading] = useState(false);
   const [spectrogram, setSpectrogram] = useState(null);
+  const [listening, setListening] = useState(false);
 
   const handleUpload = async () => {
     if (!link) {
@@ -17,7 +18,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/download_audio", {
+      const response = await fetch("/api/upload_music", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -38,6 +39,31 @@ export default function Home() {
     }
   };
 
+  const recognizeMusic = async () => {
+
+    setListening(true);
+
+    try {
+      const response = await fetch("/api/recognize_music", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      const data = await response.json();
+      console.log(data);
+
+    } catch (error) {
+      console.error("Error: ", error);
+    } finally {
+      setListening(false);
+    }
+  };
+
+  
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen w-full p-6 bg-gradient-to-b from-gray-900 to-black">
       <div className="max-w-md w-full flex flex-col items-center gap-12">
@@ -47,7 +73,7 @@ export default function Home() {
 
         <div
           className="bg-gradient-to-r from-blue-600 to-blue-500 rounded-full p-8 aspect-square flex justify-center items-center drop-shadow-[0_0_25px_rgba(59,130,246,0.6)] hover:scale-105 hover:drop-shadow-[0_0_30px_rgba(59,130,246,0.8)] transition-all duration-300 ease-in-out cursor-pointer"
-          onClick={() => console.log("Recognize")}
+          onClick={() => recognizeMusic()}
         >
           <h2 className="text-xl font-bold text-white">Listen</h2>
         </div>
@@ -64,7 +90,7 @@ export default function Home() {
             type="text"
             id="textbox"
             name="textbox"
-            placeholder="Input YouTube/Spotify link..."
+            placeholder="Enter YouTube link..."
             value={link}
             onChange={(e) => setLink(e.target.value)}
           />

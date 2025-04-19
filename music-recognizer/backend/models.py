@@ -6,6 +6,7 @@ songs = sqlalchemy.Table(
     metadata,
     sqlalchemy.Column("id", sqlalchemy.Integer, primary_key=True),
     sqlalchemy.Column("title", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("artist", sqlalchemy.String, nullable=False),
 )
 
 fingerprints = sqlalchemy.Table(
